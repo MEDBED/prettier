@@ -98,6 +98,39 @@ function insideAtRuleNode(path, atRuleName) {
   );
 }
 
+function insideURLFunctionInImportAtRuleNode(path) {
+  const node = path.getValue();
+  const atRuleAncestorNode = getAncestorNode(path, "css-atrule");
+
+  return (
+    atRuleAncestorNode &&
+    atRuleAncestorNode.name === "import" &&
+    node.groups[0].value === "url" &&
+    node.groups.length === 2
+  );
+}
+
+function insideInOpenParen(path) {
+  const node = path.getValue();
+  const ancestorNode = getAncestorNode(path, "value-value");
+
+  if (!ancestorNode) {
+    return false;
+  }
+
+  const group = ancestorNode.group;
+
+  if (group === node) {
+    return false;
+  }
+
+  if (group.type !== "value-paren_group") {
+    return false;
+  }
+
+  return group.groups && group.open;
+}
+
 function isURLFunctionNode(node) {
   return node.type === "value-func" && node.value.toLowerCase() === "url";
 }
@@ -176,10 +209,6 @@ function isSCSSControlDirectiveNode(node) {
   );
 }
 
-function isSCSSMapNode(node) {
-  return node.type === "css-decl" && node.prop && node.prop.startsWith("$");
-}
-
 function isSCSSNestedPropertyNode(node) {
   if (!node.selector) {
     return false;
@@ -194,6 +223,16 @@ function isSCSSNestedPropertyNode(node) {
 
 function isDetachedRulesetCallNode(node) {
   return node.raws && node.raws.params && /^\(\s*\)$/.test(node.raws.params);
+}
+
+function isPostcssSimpleVarNode(currentNode, nextNode) {
+  return (
+    currentNode.value === "$$" &&
+    currentNode.type === "value-func" &&
+    nextNode &&
+    nextNode.type === "value-word" &&
+    !nextNode.raws.before
+  );
 }
 
 function hasLessExtendValueNode(node) {
@@ -229,15 +268,17 @@ function hasParensAroundValueNode(node) {
   );
 }
 
-function isPostcssSimpleVarNode(currentNode, nextNode) {
+function isKeyValuePairNode(node) {
   return (
-    currentNode.value === "$$" &&
-    currentNode.type === "value-func" &&
-    nextNode &&
-    nextNode.type === "value-word" &&
-    !nextNode.raws.before
+    node.groups &&
+    node.groups[0] &&
+    node.groups[0].type === "value-comma_group" &&
+    node.groups[0].groups &&
+    node.groups[0].groups[1] &&
+    node.groups[0].groups[1].type === "value-colon"
   );
 }
+
 module.exports = {
   getAncestorCounter,
   getAncestorNode,
@@ -246,6 +287,8 @@ module.exports = {
   insideValueFunctionNode,
   insideICSSRuleNode,
   insideAtRuleNode,
+  insideURLFunctionInImportAtRuleNode,
+  insideInOpenParen,
   isKeyframeAtRuleKeywords,
   isHTMLTag,
   isWideKeywords,
@@ -264,8 +307,8 @@ module.exports = {
   hasLessExtendValueNode,
   hasComposesValueNode,
   hasParensAroundValueNode,
-  isSCSSMapNode,
   isSCSSNestedPropertyNode,
   isDetachedRulesetCallNode,
-  isPostcssSimpleVarNode
+  isPostcssSimpleVarNode,
+  isKeyValuePairNode
 };

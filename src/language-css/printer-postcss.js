@@ -14,6 +14,8 @@ const softline = docBuilders.softline;
 const group = docBuilders.group;
 const fill = docBuilders.fill;
 const indent = docBuilders.indent;
+const dedent = docBuilders.dedent;
+const ifBreak = docBuilders.ifBreak;
 
 const docUtils = doc.utils;
 const removeLines = docUtils.removeLines;
@@ -26,6 +28,9 @@ const maybeToLowerCase = utils.maybeToLowerCase;
 const insideValueFunctionNode = utils.insideValueFunctionNode;
 const insideICSSRuleNode = utils.insideICSSRuleNode;
 const insideAtRuleNode = utils.insideAtRuleNode;
+const insideURLFunctionInImportAtRuleNode =
+  utils.insideURLFunctionInImportAtRuleNode;
+const insideInOpenParen = utils.insideInOpenParen;
 const isKeyframeAtRuleKeywords = utils.isKeyframeAtRuleKeywords;
 const isHTMLTag = utils.isHTMLTag;
 const isWideKeywords = utils.isWideKeywords;
@@ -44,9 +49,20 @@ const isIfElseKeywordNode = utils.isIfElseKeywordNode;
 const hasLessExtendValueNode = utils.hasLessExtendValueNode;
 const hasComposesValueNode = utils.hasComposesValueNode;
 const hasParensAroundValueNode = utils.hasParensAroundValueNode;
-const isSCSSMapNode = utils.isSCSSMapNode;
 const isDetachedRulesetCallNode = utils.isDetachedRulesetCallNode;
 const isPostcssSimpleVarNode = utils.isPostcssSimpleVarNode;
+const isKeyValuePairNode = utils.isKeyValuePairNode;
+
+function shouldPrintComma(options) {
+  switch (options.trailingComma) {
+    case "all":
+    case "es5":
+      return true;
+    case "none":
+    default:
+      return false;
+  }
+}
 
 function genericPrint(path, options, print) {
   const node = path.getValue();
@@ -619,15 +635,10 @@ function genericPrint(path, options, print) {
       // and node has two groups
       // when type is value-comma_group
       // example @import url("verylongurl") projection,tv
-
-      if (
-        atRuleAncestorNode &&
-        atRuleAncestorNode.name === "import" &&
-        node.groups[0].value === "url" &&
-        node.groups.length === 2
-      ) {
+      if (insideURLFunctionInImportAtRuleNode(path)) {
         return group(fill(parts));
       }
+
       return group(indent(fill(parts)));
     }
     case "value-paren_group": {
@@ -663,7 +674,35 @@ function genericPrint(path, options, print) {
         return group(indent(fill(res)));
       }
 
-      const declNode = path.getParentNode(2);
+      // Break SCSS maps
+      const parentParentNode = path.getParentNode(1);
+
+      let canBreak = insideInOpenParen(path);
+
+      if (!canBreak) {
+        const declNode = getAncestorNode(path, "css-decl");
+
+        // SCSS map declaration
+        if (declNode && declNode.prop && declNode.prop.startsWith("$")) {
+          canBreak = true;
+        }
+
+        // List as value of key inside SCSS map
+        if (isKeyValuePairNode(parentParentNode)) {
+          canBreak = true;
+        }
+
+        // SCSS Map is argument of function
+        if (parentParentNode.type === "value-func") {
+          canBreak = true;
+        }
+      }
+
+      const breakable =
+        canBreak &&
+        node.groups.length > 0 &&
+        (isKeyValuePairNode(node) ||
+          (parentParentNode && isKeyValuePairNode(parentParentNode)));
 
       return group(
         concat([
@@ -672,22 +711,43 @@ function genericPrint(path, options, print) {
             concat([
               softline,
               join(
-                concat([
-                  ",",
-                  declNode && isSCSSMapNode(declNode) ? hardline : line
-                ]),
-                path.map(print, "groups")
+                concat([",", line]),
+                path.map(childPath => {
+                  const node = childPath.getValue();
+                  const printed = print(childPath);
+
+                  if (
+                    canBreak &&
+                    node.type === "value-comma_group" &&
+                    node.groups &&
+                    node.groups[2] &&
+                    node.groups[2].type === "value-paren_group"
+                  ) {
+                    printed.contents.contents.parts[1] = group(
+                      printed.contents.contents.parts[1]
+                    );
+
+                    return group(dedent(printed));
+                  }
+
+                  return printed;
+                }, "groups")
               )
             ])
           ),
-          isSCSS(options.parser, options.originalText) &&
-          node.groups.length > 1 &&
-          options.trailingComma !== "none"
-            ? ","
-            : "",
+          // Todo need add check is SCSS map
+          ifBreak(
+            isSCSS(options.parser, options.originalText) &&
+            shouldPrintComma(options)
+              ? ","
+              : ""
+          ),
           softline,
           node.close ? path.call(print, "close") : ""
-        ])
+        ]),
+        {
+          shouldBreak: breakable
+        }
       );
     }
     case "value-value": {
